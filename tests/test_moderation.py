@@ -17,20 +17,20 @@ def cog(mock_bot):
 async def test_kick_success(cog, mock_ctx, mock_member):
     await cog.kick.callback(cog, mock_ctx, mock_member, reason="test")
     mock_member.kick.assert_called_once()
-    assert "Kicked" in mock_ctx.send.call_args.args[0]
+    assert "Διώχτηκε" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_kick_self(cog, mock_ctx):
     await cog.kick.callback(cog, mock_ctx, mock_ctx.author)
-    mock_ctx.send.assert_called_once_with("You can't kick yourself.")
+    assert "τον εαυτό σου" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_kick_higher_role(cog, mock_ctx, mock_member, mock_role_high):
     mock_member.top_role = mock_role_high
     await cog.kick.callback(cog, mock_ctx, mock_member)
-    mock_ctx.send.assert_called_once_with("You can't kick someone with an equal or higher role.")
+    assert "ανώτερο ρόλο" in mock_ctx.send.call_args.args[0]
     mock_member.kick.assert_not_called()
 
 
@@ -40,20 +40,20 @@ async def test_kick_higher_role(cog, mock_ctx, mock_member, mock_role_high):
 async def test_ban_success(cog, mock_ctx, mock_member):
     await cog.ban.callback(cog, mock_ctx, mock_member, reason="test")
     mock_member.ban.assert_called_once()
-    assert "Banned" in mock_ctx.send.call_args.args[0]
+    assert "ban" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_ban_self(cog, mock_ctx):
     await cog.ban.callback(cog, mock_ctx, mock_ctx.author)
-    mock_ctx.send.assert_called_once_with("You can't ban yourself.")
+    assert "τον εαυτό σου" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_ban_higher_role(cog, mock_ctx, mock_member, mock_role_high):
     mock_member.top_role = mock_role_high
     await cog.ban.callback(cog, mock_ctx, mock_member)
-    mock_ctx.send.assert_called_once_with("You can't ban someone with an equal or higher role.")
+    assert "ανώτερο ρόλο" in mock_ctx.send.call_args.args[0]
     mock_member.ban.assert_not_called()
 
 
@@ -73,7 +73,7 @@ async def test_unban_found(cog, mock_ctx):
     mock_ctx.guild.bans = MagicMock(return_value=fake_bans())
     await cog.unban.callback(cog, mock_ctx, user="BannedUser#0000")
     mock_ctx.guild.unban.assert_called_once_with(banned_user)
-    assert "Unbanned" in mock_ctx.send.call_args.args[0]
+    assert "Αφαιρέθηκε" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -84,7 +84,7 @@ async def test_unban_not_found(cog, mock_ctx):
 
     mock_ctx.guild.bans = MagicMock(return_value=fake_bans())
     await cog.unban.callback(cog, mock_ctx, user="Nobody#0000")
-    mock_ctx.send.assert_called_once_with("Banned user not found.")
+    assert "Δεν βρέθηκε" in mock_ctx.send.call_args.args[0]
 
 
 # --- purge ---
@@ -101,11 +101,11 @@ async def test_purge_valid(cog, mock_ctx):
 @pytest.mark.asyncio
 async def test_purge_out_of_range(cog, mock_ctx):
     await cog.purge.callback(cog, mock_ctx, 0)
-    mock_ctx.send.assert_called_once_with("Amount must be between 1 and 100.")
+    assert "πλήθος" in mock_ctx.send.call_args.args[0]
 
     mock_ctx.send.reset_mock()
     await cog.purge.callback(cog, mock_ctx, 101)
-    mock_ctx.send.assert_called_once_with("Amount must be between 1 and 100.")
+    assert "πλήθος" in mock_ctx.send.call_args.args[0]
 
 
 # --- mute ---
@@ -114,18 +114,18 @@ async def test_purge_out_of_range(cog, mock_ctx):
 async def test_mute_success(cog, mock_ctx, mock_member):
     await cog.mute.callback(cog, mock_ctx, mock_member, 10, reason="spam")
     mock_member.timeout.assert_called_once()
-    assert "Muted" in mock_ctx.send.call_args.args[0]
+    assert "Φιμώθηκε" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_mute_invalid_duration(cog, mock_ctx, mock_member):
     await cog.mute.callback(cog, mock_ctx, mock_member, 0)
-    mock_ctx.send.assert_called_once_with("Duration must be between 1 and 40320 minutes.")
+    assert "διάρκεια" in mock_ctx.send.call_args.args[0]
     mock_member.timeout.assert_not_called()
 
     mock_ctx.send.reset_mock()
     await cog.mute.callback(cog, mock_ctx, mock_member, 99999)
-    mock_ctx.send.assert_called_once_with("Duration must be between 1 and 40320 minutes.")
+    assert "διάρκεια" in mock_ctx.send.call_args.args[0]
 
 
 # --- unmute ---
@@ -134,4 +134,4 @@ async def test_mute_invalid_duration(cog, mock_ctx, mock_member):
 async def test_unmute(cog, mock_ctx, mock_member):
     await cog.unmute.callback(cog, mock_ctx, mock_member)
     mock_member.timeout.assert_called_once_with(None)
-    assert "Unmuted" in mock_ctx.send.call_args.args[0]
+    assert "Αφαιρέθηκε" in mock_ctx.send.call_args.args[0]

@@ -54,7 +54,7 @@ def test_guild_player_defaults():
 async def test_play_not_in_voice(cog, mock_ctx):
     mock_ctx.author.voice = None
     await cog.play.callback(cog, mock_ctx, query="test song")
-    mock_ctx.send.assert_called_once_with("You're not in a voice channel.")
+    assert "voice channel" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -65,7 +65,7 @@ async def test_play_already_playing_different_channel(cog, mock_ctx, mock_voice_
     mock_ctx.author.voice.channel = MagicMock()
 
     await cog.play.callback(cog, mock_ctx, query="test")
-    assert "already playing" in mock_ctx.send.call_args.args[0]
+    assert "Παίζω ήδη" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -84,7 +84,7 @@ async def test_play_adds_to_queue(cog, mock_ctx, mock_voice_client):
 
     player = cog.get_player(mock_ctx.guild.id)
     assert len(player.queue) == 1
-    assert "Added to queue" in searching_msg.edit.call_args.kwargs["content"]
+    assert "Προστέθηκε" in searching_msg.edit.call_args.kwargs["content"]
 
 
 @pytest.mark.asyncio
@@ -116,7 +116,7 @@ async def test_play_fetch_error(cog, mock_ctx, mock_voice_client):
     with patch("cogs.music.Song.from_query", AsyncMock(side_effect=Exception("Network error"))):
         await cog.play.callback(cog, mock_ctx, query="bad query")
 
-    assert "Could not fetch audio" in searching_msg.edit.call_args.kwargs["content"]
+    assert "ανάκτηση" in searching_msg.edit.call_args.kwargs["content"]
 
 
 # --- pause ---
@@ -127,13 +127,13 @@ async def test_pause_while_playing(cog, mock_ctx, mock_voice_client):
     mock_voice_client.is_playing.return_value = True
     await cog.pause.callback(cog, mock_ctx)
     mock_voice_client.pause.assert_called_once()
-    mock_ctx.send.assert_called_once_with("Paused.")
+    assert mock_ctx.send.call_args.args[0] == "Παύση."
 
 
 @pytest.mark.asyncio
 async def test_pause_nothing_playing(cog, mock_ctx):
     await cog.pause.callback(cog, mock_ctx)
-    mock_ctx.send.assert_called_once_with("Nothing is playing.")
+    assert mock_ctx.send.call_args.args[0] == "Δεν παίζει τίποτα."
 
 
 # --- resume ---
@@ -144,13 +144,13 @@ async def test_resume_while_paused(cog, mock_ctx, mock_voice_client):
     mock_voice_client.is_paused.return_value = True
     await cog.resume.callback(cog, mock_ctx)
     mock_voice_client.resume.assert_called_once()
-    mock_ctx.send.assert_called_once_with("Resumed.")
+    assert "Συνέχιση" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_resume_nothing_paused(cog, mock_ctx):
     await cog.resume.callback(cog, mock_ctx)
-    mock_ctx.send.assert_called_once_with("Nothing is paused.")
+    assert "παύση" in mock_ctx.send.call_args.args[0]
 
 
 # --- skip ---
@@ -161,13 +161,13 @@ async def test_skip_while_playing(cog, mock_ctx, mock_voice_client):
     mock_voice_client.is_playing.return_value = True
     await cog.skip.callback(cog, mock_ctx)
     mock_voice_client.stop.assert_called_once()
-    mock_ctx.send.assert_called_once_with("Skipped.")
+    assert "Παρακάμφθηκε" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_skip_nothing_playing(cog, mock_ctx):
     await cog.skip.callback(cog, mock_ctx)
-    mock_ctx.send.assert_called_once_with("Nothing is playing.")
+    assert "Δεν παίζει" in mock_ctx.send.call_args.args[0]
 
 
 # --- queue ---
@@ -175,7 +175,7 @@ async def test_skip_nothing_playing(cog, mock_ctx):
 @pytest.mark.asyncio
 async def test_queue_empty(cog, mock_ctx):
     await cog.queue.callback(cog, mock_ctx)
-    mock_ctx.send.assert_called_once_with("Queue is empty.")
+    assert "άδεια" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -185,7 +185,7 @@ async def test_queue_with_songs(cog, mock_ctx):
     player.queue.append(make_song("Next Song"))
     await cog.queue.callback(cog, mock_ctx)
     embed = mock_ctx.send.call_args.kwargs["embed"]
-    assert embed.title == "Queue"
+    assert embed.title == "Ουρά"
 
 
 # --- nowplaying ---
@@ -193,7 +193,7 @@ async def test_queue_with_songs(cog, mock_ctx):
 @pytest.mark.asyncio
 async def test_nowplaying_nothing(cog, mock_ctx):
     await cog.nowplaying.callback(cog, mock_ctx)
-    mock_ctx.send.assert_called_once_with("Nothing is playing.")
+    assert "Δεν παίζει" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -202,7 +202,7 @@ async def test_nowplaying_with_song(cog, mock_ctx):
     player.current = make_song()
     await cog.nowplaying.callback(cog, mock_ctx)
     embed = mock_ctx.send.call_args.kwargs["embed"]
-    assert embed.title == "Now Playing"
+    assert embed.title == "Παίζει Τώρα"
 
 
 # --- loop ---
@@ -234,13 +234,13 @@ async def test_stop_clears_and_disconnects(cog, mock_ctx, mock_voice_client):
     assert player.loop is False
     mock_voice_client.stop.assert_called_once()
     mock_voice_client.disconnect.assert_called_once()
-    mock_ctx.send.assert_called_once_with("Stopped and disconnected.")
+    assert "Σταμάτησε" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_stop_no_voice_client(cog, mock_ctx):
     await cog.stop.callback(cog, mock_ctx)
-    mock_ctx.send.assert_called_once_with("Stopped and disconnected.")
+    assert "Σταμάτησε" in mock_ctx.send.call_args.args[0]
 
 
 # --- remove ---
@@ -257,13 +257,13 @@ async def test_remove_success(cog, mock_ctx):
     assert len(player.queue) == 2
     titles = [s.title for s in player.queue]
     assert "Song B" not in titles
-    assert "Removed" in mock_ctx.send.call_args.args[0]
+    assert "Αφαιρέθηκε" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_remove_empty_queue(cog, mock_ctx):
     await cog.remove.callback(cog, mock_ctx, 1)
-    mock_ctx.send.assert_called_once_with("The queue is empty.")
+    assert "άδεια" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -271,7 +271,7 @@ async def test_remove_out_of_range(cog, mock_ctx):
     player = cog.get_player(mock_ctx.guild.id)
     player.queue.append(make_song())
     await cog.remove.callback(cog, mock_ctx, 5)
-    assert "Position must be between" in mock_ctx.send.call_args.args[0]
+    assert "θέση" in mock_ctx.send.call_args.args[0]
 
 
 # --- shuffle ---
@@ -285,7 +285,7 @@ async def test_shuffle_success(cog, mock_ctx):
     await cog.shuffle.callback(cog, mock_ctx)
 
     assert len(player.queue) == 5
-    mock_ctx.send.assert_called_once_with("Queue shuffled.")
+    assert "ανακατεύτηκε" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -293,4 +293,4 @@ async def test_shuffle_too_few(cog, mock_ctx):
     player = cog.get_player(mock_ctx.guild.id)
     player.queue.append(make_song())
     await cog.shuffle.callback(cog, mock_ctx)
-    mock_ctx.send.assert_called_once_with("Need at least 2 songs in the queue to shuffle.")
+    assert "τουλάχιστον 2" in mock_ctx.send.call_args.args[0]

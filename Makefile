@@ -11,9 +11,8 @@ test:
 deploy:
 	ssh $(PI_USER)@$(PI_HOST) "git clone $(REPO_URL) $(PI_DIR) && cd $(PI_DIR) && python3 -m venv venv && venv/bin/pip install -r requirements.txt"
 
-# Push local changes, pull on the Pi, and restart the bot
+# Pull latest changes on the Pi and restart the bot (push to git first manually)
 update:
-	git push
 	ssh $(PI_USER)@$(PI_HOST) "cd $(PI_DIR) && git pull && sudo systemctl restart megks_bot"
 
 # Start the bot service on the Pi

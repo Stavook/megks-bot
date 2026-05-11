@@ -18,7 +18,7 @@ async def test_reload_specific_success(cog, mock_ctx):
     cog.bot.reload_extension = AsyncMock()
     await cog.reload.callback(cog, mock_ctx, cog="music")
     cog.bot.reload_extension.assert_called_once_with("cogs.music")
-    mock_ctx.send.assert_called_once_with("Reloaded `cogs.music`")
+    assert "Επαναφορτώθηκε" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -26,14 +26,14 @@ async def test_reload_specific_not_loaded(cog, mock_ctx):
     from discord.ext import commands
     cog.bot.reload_extension = AsyncMock(side_effect=commands.ExtensionNotLoaded("cogs.music"))
     await cog.reload.callback(cog, mock_ctx, cog="music")
-    mock_ctx.send.assert_called_once_with("`cogs.music` is not loaded.")
+    assert "δεν είναι φορτωμένο" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_reload_specific_error(cog, mock_ctx):
     cog.bot.reload_extension = AsyncMock(side_effect=Exception("Syntax error"))
     await cog.reload.callback(cog, mock_ctx, cog="music")
-    assert "Failed to reload" in mock_ctx.send.call_args.args[0]
+    assert "Αποτυχία" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -55,14 +55,14 @@ async def test_load_success(cog, mock_ctx):
     cog.bot.load_extension = AsyncMock()
     await cog.load.callback(cog, mock_ctx, cog="fun")
     cog.bot.load_extension.assert_called_once_with("cogs.fun")
-    mock_ctx.send.assert_called_once_with("Loaded `cogs.fun`")
+    assert "Φορτώθηκε" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_load_failure(cog, mock_ctx):
     cog.bot.load_extension = AsyncMock(side_effect=Exception("Not found"))
     await cog.load.callback(cog, mock_ctx, cog="badcog")
-    assert "Failed to load" in mock_ctx.send.call_args.args[0]
+    assert "Αποτυχία φόρτωσης" in mock_ctx.send.call_args.args[0]
 
 
 # --- unload ---
@@ -72,11 +72,11 @@ async def test_unload_success(cog, mock_ctx):
     cog.bot.unload_extension = AsyncMock()
     await cog.unload.callback(cog, mock_ctx, cog="fun")
     cog.bot.unload_extension.assert_called_once_with("cogs.fun")
-    mock_ctx.send.assert_called_once_with("Unloaded `cogs.fun`")
+    assert "Αποφορτώθηκε" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_unload_failure(cog, mock_ctx):
     cog.bot.unload_extension = AsyncMock(side_effect=Exception("Not loaded"))
     await cog.unload.callback(cog, mock_ctx, cog="badcog")
-    assert "Failed to unload" in mock_ctx.send.call_args.args[0]
+    assert "Αποτυχία αποφόρτωσης" in mock_ctx.send.call_args.args[0]

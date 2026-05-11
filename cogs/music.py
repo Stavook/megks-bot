@@ -24,7 +24,7 @@ ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 class Song:
     def __init__(self, source, data, requester):
         self.source = source
-        self.title = data.get("title", "Unknown")
+        self.title = data.get("title", "Άγνωστο")
         self.url = data.get("webpage_url", "")
         self.duration = data.get("duration", 0)
         self.thumbnail = data.get("thumbnail")
@@ -54,7 +54,7 @@ class GuildPlayer:
 
 
 class Music(commands.Cog):
-    """Music playback commands."""
+    """Εντολές αναπαραγωγής μουσικής."""
 
     def __init__(self, bot):
         self.bot = bot
@@ -80,83 +80,83 @@ class Music(commands.Cog):
             song.source,
             after=lambda e: asyncio.run_coroutine_threadsafe(self.play_next(ctx), self.bot.loop)
         )
-        embed = discord.Embed(title="Now Playing", description=f"[{song.title}]({song.url})", color=discord.Color.green())
-        embed.add_field(name="Duration", value=song.format_duration())
-        embed.add_field(name="Requested by", value=song.requester.mention)
+        embed = discord.Embed(title="Παίζει Τώρα", description=f"[{song.title}]({song.url})", color=discord.Color.green())
+        embed.add_field(name="Διάρκεια", value=song.format_duration())
+        embed.add_field(name="Ζητήθηκε από", value=song.requester.mention)
         if song.thumbnail:
             embed.set_thumbnail(url=song.thumbnail)
         await ctx.send(embed=embed)
 
     @commands.command(name="play", aliases=["p"])
     async def play(self, ctx, *, query: str):
-        """Plays a song by URL or search query."""
+        """Παίζει ένα τραγούδι από URL ή αναζήτηση."""
         if not ctx.author.voice:
-            return await ctx.send("You're not in a voice channel.")
+            return await ctx.send("Δεν είσαι σε voice channel.")
         if ctx.voice_client and ctx.voice_client.is_playing() and ctx.voice_client.channel != ctx.author.voice.channel:
-            return await ctx.send(f"I'm already playing music in **{ctx.voice_client.channel.name}**.")
+            return await ctx.send(f"Παίζω ήδη μουσική στο **{ctx.voice_client.channel.name}**.")
         if not ctx.voice_client:
             await ctx.author.voice.channel.connect()
 
         player = self.get_player(ctx.guild.id)
-        searching = await ctx.send(f"Searching for `{query}`...")
+        searching = await ctx.send(f"Αναζήτηση για `{query}`...")
         try:
             song = await Song.from_query(query, ctx.author, self.bot.loop)
         except Exception as e:
-            return await searching.edit(content=f"Could not fetch audio: {e}")
+            return await searching.edit(content=f"Δεν ήταν δυνατή η ανάκτηση: {e}")
 
         if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
             player.queue.append(song)
-            await searching.edit(content=f"Added to queue: **{song.title}** (position {len(player.queue)})")
+            await searching.edit(content=f"Προστέθηκε στην ουρά: **{song.title}** (θέση {len(player.queue)})")
         else:
             player.current = song
             ctx.voice_client.play(
                 song.source,
                 after=lambda e: asyncio.run_coroutine_threadsafe(self.play_next(ctx), self.bot.loop)
             )
-            embed = discord.Embed(title="Now Playing", description=f"[{song.title}]({song.url})", color=discord.Color.green())
-            embed.add_field(name="Duration", value=song.format_duration())
-            embed.add_field(name="Requested by", value=song.requester.mention)
+            embed = discord.Embed(title="Παίζει Τώρα", description=f"[{song.title}]({song.url})", color=discord.Color.green())
+            embed.add_field(name="Διάρκεια", value=song.format_duration())
+            embed.add_field(name="Ζητήθηκε από", value=song.requester.mention)
             if song.thumbnail:
                 embed.set_thumbnail(url=song.thumbnail)
             await searching.edit(content=None, embed=embed)
 
     @commands.command(name="pause")
     async def pause(self, ctx):
-        """Pauses playback."""
+        """Παγώνει την αναπαραγωγή."""
         if ctx.voice_client and ctx.voice_client.is_playing():
             ctx.voice_client.pause()
-            await ctx.send("Paused.")
+            await ctx.send("Παύση.")
         else:
-            await ctx.send("Nothing is playing.")
+            await ctx.send("Δεν παίζει τίποτα.")
 
     @commands.command(name="resume", aliases=["r"])
     async def resume(self, ctx):
-        """Resumes playback."""
+        """Συνεχίζει την αναπαραγωγή."""
         if ctx.voice_client and ctx.voice_client.is_paused():
             ctx.voice_client.resume()
-            await ctx.send("Resumed.")
+            await ctx.send("Συνέχιση.")
         else:
-            await ctx.send("Nothing is paused.")
+            await ctx.send("Δεν υπάρχει κάτι σε παύση.")
 
     @commands.command(name="skip", aliases=["s"])
     async def skip(self, ctx):
-        """Skips the current song."""
+        """Παρακάμπτει το τρέχον τραγούδι."""
         if ctx.voice_client and ctx.voice_client.is_playing():
             ctx.voice_client.stop()
-            await ctx.send("Skipped.")
+            await ctx.send("Παρακάμφθηκε.")
         else:
-            await ctx.send("Nothing is playing.")
+            await ctx.send("Δεν παίζει τίποτα.")
 
     @commands.command(name="queue", aliases=["q"])
     async def queue(self, ctx):
-        """Shows the current queue."""
+        """Δείχνει την τρέχουσα ουρά."""
         player = self.get_player(ctx.guild.id)
         if not player.current and not player.queue:
-            return await ctx.send("Queue is empty.")
-        embed = discord.Embed(title="Queue", color=discord.Color.blurple())
+            return await ctx.send("Η ουρά είναι άδεια.")
+        embed = discord.Embed(title="Ουρά", color=discord.Color.blurple())
         if player.current:
             embed.add_field(
-                name="Now Playing",
+                name="Παίζει Τώρα",
                 value=f"[{player.current.title}]({player.current.url}) — {player.current.format_duration()}",
                 inline=False
             )
@@ -165,61 +165,61 @@ class Music(commands.Cog):
                 f"`{i+1}.` [{s.title}]({s.url}) — {s.format_duration()}"
                 for i, s in enumerate(player.queue)
             ]
-            embed.add_field(name="Up Next", value="\n".join(lines[:10]), inline=False)
+            embed.add_field(name="Επόμενα", value="\n".join(lines[:10]), inline=False)
             if len(player.queue) > 10:
-                embed.set_footer(text=f"...and {len(player.queue) - 10} more")
+                embed.set_footer(text=f"...και {len(player.queue) - 10} ακόμα")
         await ctx.send(embed=embed)
 
     @commands.command(name="nowplaying", aliases=["np"])
     async def nowplaying(self, ctx):
-        """Shows the currently playing song."""
+        """Δείχνει το τραγούδι που παίζει τώρα."""
         player = self.get_player(ctx.guild.id)
         if not player.current:
-            return await ctx.send("Nothing is playing.")
+            return await ctx.send("Δεν παίζει τίποτα.")
         song = player.current
-        embed = discord.Embed(title="Now Playing", description=f"[{song.title}]({song.url})", color=discord.Color.green())
-        embed.add_field(name="Duration", value=song.format_duration())
-        embed.add_field(name="Requested by", value=song.requester.mention)
-        embed.add_field(name="Loop", value="On" if player.loop else "Off")
+        embed = discord.Embed(title="Παίζει Τώρα", description=f"[{song.title}]({song.url})", color=discord.Color.green())
+        embed.add_field(name="Διάρκεια", value=song.format_duration())
+        embed.add_field(name="Ζητήθηκε από", value=song.requester.mention)
+        embed.add_field(name="Επανάληψη", value="Ναι" if player.loop else "Όχι")
         if song.thumbnail:
             embed.set_thumbnail(url=song.thumbnail)
         await ctx.send(embed=embed)
 
     @commands.command(name="loop", aliases=["l"])
     async def loop(self, ctx):
-        """Toggles looping the current song."""
+        """Ενεργοποιεί/απενεργοποιεί την επανάληψη του τραγουδιού."""
         player = self.get_player(ctx.guild.id)
         player.loop = not player.loop
-        await ctx.send(f"Loop {'enabled' if player.loop else 'disabled'}.")
+        await ctx.send(f"Επανάληψη {'ενεργοποιήθηκε' if player.loop else 'απενεργοποιήθηκε'}.")
 
     @commands.command(name="remove")
     async def remove(self, ctx, position: int):
-        """Removes a song from the queue by position."""
+        """Αφαιρεί ένα τραγούδι από την ουρά μέσω θέσης."""
         player = self.get_player(ctx.guild.id)
         if not player.queue:
-            return await ctx.send("The queue is empty.")
+            return await ctx.send("Η ουρά είναι άδεια.")
         if not 1 <= position <= len(player.queue):
-            return await ctx.send(f"Position must be between 1 and {len(player.queue)}.")
+            return await ctx.send(f"Η θέση πρέπει να είναι μεταξύ 1 και {len(player.queue)}.")
         queue_list = list(player.queue)
         removed = queue_list.pop(position - 1)
         player.queue = deque(queue_list)
-        await ctx.send(f"Removed **{removed.title}** from the queue.")
+        await ctx.send(f"Αφαιρέθηκε το **{removed.title}** από την ουρά.")
 
     @commands.command(name="shuffle")
     async def shuffle(self, ctx):
-        """Shuffles the queue."""
+        """Ανακατεύει την ουρά."""
         player = self.get_player(ctx.guild.id)
         if len(player.queue) < 2:
-            return await ctx.send("Need at least 2 songs in the queue to shuffle.")
+            return await ctx.send("Χρειάζονται τουλάχιστον 2 τραγούδια στην ουρά για ανακάτεμα.")
         import random
         queue_list = list(player.queue)
         random.shuffle(queue_list)
         player.queue = deque(queue_list)
-        await ctx.send("Queue shuffled.")
+        await ctx.send("Η ουρά ανακατεύτηκε.")
 
     @commands.command(name="stop")
     async def stop(self, ctx):
-        """Stops playback, clears the queue, and disconnects."""
+        """Σταματάει την αναπαραγωγή, καθαρίζει την ουρά και αποσυνδέεται."""
         player = self.get_player(ctx.guild.id)
         player.queue.clear()
         player.current = None
@@ -227,7 +227,7 @@ class Music(commands.Cog):
         if ctx.voice_client:
             ctx.voice_client.stop()
             await ctx.voice_client.disconnect()
-        await ctx.send("Stopped and disconnected.")
+        await ctx.send("Σταμάτησε και αποσυνδέθηκε.")
 
 
 async def setup(bot):

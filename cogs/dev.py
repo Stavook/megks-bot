@@ -4,7 +4,7 @@ import os
 
 
 class Dev(commands.Cog, command_attrs={"hidden": True}):
-    """Developer commands — bot owner only."""
+    """Εντολές developer — μόνο για τον owner."""
 
     def __init__(self, bot):
         self.bot = bot
@@ -14,16 +14,16 @@ class Dev(commands.Cog, command_attrs={"hidden": True}):
 
     @commands.command(name="reload", aliases=["rl"])
     async def reload(self, ctx, cog: str = None):
-        """Reloads a cog or all cogs if none specified."""
+        """Επαναφορτώνει ένα cog ή όλα αν δεν δοθεί όνομα."""
         if cog:
             target = f"cogs.{cog}"
             try:
                 await self.bot.reload_extension(target)
-                await ctx.send(f"Reloaded `{target}`")
+                await ctx.send(f"Επαναφορτώθηκε `{target}`")
             except commands.ExtensionNotLoaded:
-                await ctx.send(f"`{target}` is not loaded.")
+                await ctx.send(f"Το `{target}` δεν είναι φορτωμένο.")
             except Exception as e:
-                await ctx.send(f"Failed to reload `{target}`: {e}")
+                await ctx.send(f"Αποτυχία επαναφόρτωσης `{target}`: {e}")
         else:
             results = []
             for filename in os.listdir("./cogs"):
@@ -38,23 +38,23 @@ class Dev(commands.Cog, command_attrs={"hidden": True}):
 
     @commands.command(name="load")
     async def load(self, ctx, cog: str):
-        """Loads a cog."""
+        """Φορτώνει ένα cog."""
         target = f"cogs.{cog}"
         try:
             await self.bot.load_extension(target)
-            await ctx.send(f"Loaded `{target}`")
+            await ctx.send(f"Φορτώθηκε `{target}`")
         except Exception as e:
-            await ctx.send(f"Failed to load `{target}`: {e}")
+            await ctx.send(f"Αποτυχία φόρτωσης `{target}`: {e}")
 
     @commands.command(name="unload")
     async def unload(self, ctx, cog: str):
-        """Unloads a cog."""
+        """Αποφορτώνει ένα cog."""
         target = f"cogs.{cog}"
         try:
             await self.bot.unload_extension(target)
-            await ctx.send(f"Unloaded `{target}`")
+            await ctx.send(f"Αποφορτώθηκε `{target}`")
         except Exception as e:
-            await ctx.send(f"Failed to unload `{target}`: {e}")
+            await ctx.send(f"Αποτυχία αποφόρτωσης `{target}`: {e}")
 
 
 async def setup(bot):

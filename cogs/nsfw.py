@@ -1,7 +1,6 @@
 import discord
 from discord.ext import commands
 import aiohttp
-import random
 
 NEKOBOT_API = "https://nekobot.xyz/api/image"
 
@@ -9,7 +8,7 @@ VALID_TAGS = ["pgif", "hentai", "boobs", "anal", "pussy"]
 
 
 class NSFW(commands.Cog):
-    """NSFW commands — only usable in age-restricted channels."""
+    """NSFW εντολές — μόνο σε age-restricted channels."""
 
     def __init__(self, bot):
         self.bot = bot
@@ -17,18 +16,18 @@ class NSFW(commands.Cog):
     @commands.command(name="porn", aliases=["nsfw"])
     @commands.is_nsfw()
     async def porn(self, ctx, tag: str = "pgif"):
-        """Posts a random NSFW image/GIF. Optional tag: pgif, hentai, boobs, anal, pussy."""
+        """Στέλνει τυχαίο NSFW image/GIF. Tags: pgif, hentai, boobs, anal, pussy."""
         if tag not in VALID_TAGS:
-            return await ctx.send(f"Invalid tag. Choose from: {', '.join(f'`{t}`' for t in VALID_TAGS)}")
+            return await ctx.send(f"Άκυρο tag. Επίλεξε από: {', '.join(f'`{t}`' for t in VALID_TAGS)}")
 
         async with aiohttp.ClientSession() as session:
             async with session.get(NEKOBOT_API, params={"type": tag}) as resp:
                 if resp.status != 200:
-                    return await ctx.send("Could not fetch content, try again later.")
+                    return await ctx.send("Δεν ήταν δυνατή η ανάκτηση, δοκίμασε ξανά αργότερα.")
                 data = await resp.json()
 
         if not data.get("success"):
-            return await ctx.send("Could not fetch content, try again later.")
+            return await ctx.send("Δεν ήταν δυνατή η ανάκτηση, δοκίμασε ξανά αργότερα.")
 
         embed = discord.Embed(color=discord.Color.red())
         embed.set_footer(text=f"Tag: {tag}")

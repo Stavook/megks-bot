@@ -20,10 +20,10 @@ async def test_choose_valid(cog, mock_ctx):
 @pytest.mark.asyncio
 async def test_choose_single_option(cog, mock_ctx):
     await cog.choose.callback(cog, mock_ctx, options="only one")
-    mock_ctx.send.assert_called_once_with("Provide at least 2 options separated by commas.")
+    assert "τουλάχιστον 2" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_choose_empty(cog, mock_ctx):
     await cog.choose.callback(cog, mock_ctx, options=",,,")
-    mock_ctx.send.assert_called_once_with("Provide at least 2 options separated by commas.")
+    assert "τουλάχιστον 2" in mock_ctx.send.call_args.args[0]

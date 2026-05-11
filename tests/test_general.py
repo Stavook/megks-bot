@@ -12,21 +12,11 @@ def cog(mock_bot):
 
 
 @pytest.mark.asyncio
-async def test_ping(cog, mock_ctx):
-    msg = AsyncMock()
-    mock_ctx.send = AsyncMock(return_value=msg)
-    await cog.ping.callback(cog, mock_ctx)
-    mock_ctx.send.assert_called_once_with("Pinging...")
-    msg.edit.assert_called_once()
-    assert "Pong!" in msg.edit.call_args.kwargs["content"]
-
-
-@pytest.mark.asyncio
 async def test_help_no_args(cog, mock_ctx):
     mock_cog = MagicMock()
     cmd = MagicMock()
-    cmd.name = "ping"
-    cmd.help = "Shows bot latency."
+    cmd.name = "avatar"
+    cmd.help = "Δείχνει το avatar."
     cmd.hidden = False
     mock_cog.get_commands.return_value = [cmd]
     cog.bot.cogs = {"General": mock_cog}
@@ -40,21 +30,40 @@ async def test_help_no_args(cog, mock_ctx):
 @pytest.mark.asyncio
 async def test_help_specific_command(cog, mock_ctx):
     cmd = MagicMock()
-    cmd.name = "ping"
-    cmd.help = "Shows bot latency."
-    cmd.aliases = ["p"]
+    cmd.name = "avatar"
+    cmd.help = "Δείχνει το avatar."
+    cmd.aliases = []
+    cog.bot.cogs = {}
     cog.bot.get_command = MagicMock(return_value=cmd)
 
-    await cog.help_command.callback(cog, mock_ctx, command_name="ping")
+    await cog.help_command.callback(cog, mock_ctx, query="avatar")
     embed = mock_ctx.send.call_args.kwargs["embed"]
-    assert "ping" in embed.title
+    assert "avatar" in embed.title
 
 
 @pytest.mark.asyncio
-async def test_help_unknown_command(cog, mock_ctx):
+async def test_help_specific_category(cog, mock_ctx):
+    fun_cog = MagicMock()
+    fun_cog.description = "Εντολές διασκέδασης."
+    type(fun_cog).__name__ = "Fun"
+    cmd = MagicMock()
+    cmd.name = "choose"
+    cmd.help = "Επιλέγει τυχαία."
+    cmd.hidden = False
+    fun_cog.get_commands.return_value = [cmd]
+    cog.bot.cogs = {"Fun": fun_cog}
+
+    await cog.help_command.callback(cog, mock_ctx, query="fun")
+    embed = mock_ctx.send.call_args.kwargs["embed"]
+    assert "Fun" in embed.title
+
+
+@pytest.mark.asyncio
+async def test_help_unknown_query(cog, mock_ctx):
+    cog.bot.cogs = {}
     cog.bot.get_command = MagicMock(return_value=None)
-    await cog.help_command.callback(cog, mock_ctx, command_name="nonexistent")
-    mock_ctx.send.assert_called_once_with("Command `nonexistent` not found.")
+    await cog.help_command.callback(cog, mock_ctx, query="nonexistent")
+    assert "Δεν βρέθηκε" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio

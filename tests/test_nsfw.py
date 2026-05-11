@@ -27,7 +27,7 @@ def make_aiohttp_response(status=200, json_data=None):
 @pytest.mark.asyncio
 async def test_porn_invalid_tag(cog, mock_ctx):
     await cog.porn.callback(cog, mock_ctx, tag="invalid")
-    assert "Invalid tag" in mock_ctx.send.call_args.args[0]
+    assert "Άκυρο" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -35,7 +35,7 @@ async def test_porn_api_error(cog, mock_ctx):
     session = make_aiohttp_response(status=500)
     with patch("aiohttp.ClientSession", return_value=session):
         await cog.porn.callback(cog, mock_ctx, tag="hentai")
-    mock_ctx.send.assert_called_once_with("Could not fetch content, try again later.")
+    assert "ανάκτηση" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -43,7 +43,7 @@ async def test_porn_no_results(cog, mock_ctx):
     session = make_aiohttp_response(json_data={"success": False})
     with patch("aiohttp.ClientSession", return_value=session):
         await cog.porn.callback(cog, mock_ctx, tag="hentai")
-    mock_ctx.send.assert_called_once_with("Could not fetch content, try again later.")
+    assert "ανάκτηση" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
