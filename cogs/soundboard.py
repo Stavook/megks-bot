@@ -28,9 +28,7 @@ class Soundboard(commands.Cog):
     async def on_voice_state_update(self, member, before, after):
         if member.bot:
             return
-        if before.channel == after.channel:
-            return
-        if after.channel is None:
+        if before.channel is not None or after.channel is None:
             return
         guild = member.guild
         if not self.is_enabled(guild.id):
