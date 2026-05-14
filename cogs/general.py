@@ -8,6 +8,7 @@ COG_ICONS = {
     "Fun": "🎲",
     "NSFW": "🔞",
     "Rules": "📜",
+    "Soundboard": "🔊",
 }
 
 
