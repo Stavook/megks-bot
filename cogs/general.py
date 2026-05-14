@@ -7,6 +7,7 @@ COG_ICONS = {
     "Music": "🎵",
     "Fun": "🎲",
     "NSFW": "🔞",
+    "Rules": "📜",
 }
 
 

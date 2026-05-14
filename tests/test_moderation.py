@@ -23,7 +23,15 @@ async def test_kick_success(cog, mock_ctx, mock_member):
 @pytest.mark.asyncio
 async def test_kick_self(cog, mock_ctx):
     await cog.kick.callback(cog, mock_ctx, mock_ctx.author)
-    assert "τον εαυτό σου" in mock_ctx.send.call_args.args[0]
+    assert "εαυτό σου" in mock_ctx.send.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_kick_owner(cog, mock_ctx, mock_member):
+    mock_ctx.guild.owner = mock_member
+    await cog.kick.callback(cog, mock_ctx, mock_member)
+    assert "ιδιοκτήτη" in mock_ctx.send.call_args.args[0]
+    mock_member.kick.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -46,7 +54,7 @@ async def test_ban_success(cog, mock_ctx, mock_member):
 @pytest.mark.asyncio
 async def test_ban_self(cog, mock_ctx):
     await cog.ban.callback(cog, mock_ctx, mock_ctx.author)
-    assert "τον εαυτό σου" in mock_ctx.send.call_args.args[0]
+    assert "εαυτό σου" in mock_ctx.send.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -101,11 +109,11 @@ async def test_purge_valid(cog, mock_ctx):
 @pytest.mark.asyncio
 async def test_purge_out_of_range(cog, mock_ctx):
     await cog.purge.callback(cog, mock_ctx, 0)
-    assert "πλήθος" in mock_ctx.send.call_args.args[0]
+    assert "μεταξύ 1 και 100" in mock_ctx.send.call_args.args[0]
 
     mock_ctx.send.reset_mock()
     await cog.purge.callback(cog, mock_ctx, 101)
-    assert "πλήθος" in mock_ctx.send.call_args.args[0]
+    assert "μεταξύ 1 και 100" in mock_ctx.send.call_args.args[0]
 
 
 # --- mute ---
@@ -132,6 +140,15 @@ async def test_mute_invalid_duration(cog, mock_ctx, mock_member):
 
 @pytest.mark.asyncio
 async def test_unmute(cog, mock_ctx, mock_member):
+    mock_member.is_timed_out = MagicMock(return_value=True)
     await cog.unmute.callback(cog, mock_ctx, mock_member)
     mock_member.timeout.assert_called_once_with(None)
     assert "Αφαιρέθηκε" in mock_ctx.send.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_unmute_not_muted(cog, mock_ctx, mock_member):
+    mock_member.is_timed_out = MagicMock(return_value=False)
+    await cog.unmute.callback(cog, mock_ctx, mock_member)
+    mock_member.timeout.assert_not_called()
+    assert "δεν είναι φιμωμένος" in mock_ctx.send.call_args.args[0]

@@ -107,6 +107,16 @@ def mock_ctx(mock_author, mock_bot):
     ctx.guild.default_role = MagicMock()
     ctx.guild.bans = MagicMock()
     ctx.guild.unban = AsyncMock()
+    ctx.guild.owner = MagicMock(spec=discord.Member)
+    ctx.guild.owner.id = 555
+    bot_member = MagicMock(spec=discord.Member)
+    bot_member.id = 999
+    bot_role = MagicMock(spec=discord.Role)
+    bot_role.position = 100
+    bot_role.__ge__ = lambda self, other: self.position >= other.position
+    bot_role.__lt__ = lambda self, other: self.position < other.position
+    bot_member.top_role = bot_role
+    ctx.guild.me = bot_member
     ctx.channel = MagicMock()
     ctx.channel.purge = AsyncMock(return_value=[MagicMock()] * 6)
     ctx.voice_client = None
