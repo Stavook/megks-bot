@@ -4,7 +4,7 @@ import aiohttp
 
 NEKOBOT_API = "https://nekobot.xyz/api/image"
 
-VALID_TAGS = ["pgif", "hentai", "boobs", "anal", "pussy"]
+VALID_TAGS = ["pgif", "boobs", "ass", "thigh", "pussy", "anal", "gonewild", "4k", "les"]
 
 
 class NSFW(commands.Cog):
@@ -16,7 +16,7 @@ class NSFW(commands.Cog):
     @commands.command(name="porn", aliases=["nsfw"])
     @commands.is_nsfw()
     async def porn(self, ctx, tag: str = "pgif"):
-        """Στέλνει τυχαίο NSFW image/GIF. Tags: pgif, hentai, boobs, anal, pussy."""
+        """Στέλνει τυχαίο NSFW image/GIF. Tags: pgif, boobs, ass, thigh, pussy, anal, gonewild, 4k, les."""
         if tag not in VALID_TAGS:
             return await ctx.send(f"Άκυρο tag. Επίλεξε από: {', '.join(f'`{t}`' for t in VALID_TAGS)}")
 

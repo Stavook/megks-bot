@@ -34,7 +34,7 @@ async def test_porn_invalid_tag(cog, mock_ctx):
 async def test_porn_api_error(cog, mock_ctx):
     session = make_aiohttp_response(status=500)
     with patch("aiohttp.ClientSession", return_value=session):
-        await cog.porn.callback(cog, mock_ctx, tag="hentai")
+        await cog.porn.callback(cog, mock_ctx, tag="boobs")
     assert "ανάκτηση" in mock_ctx.send.call_args.args[0]
 
 
@@ -42,7 +42,7 @@ async def test_porn_api_error(cog, mock_ctx):
 async def test_porn_no_results(cog, mock_ctx):
     session = make_aiohttp_response(json_data={"success": False})
     with patch("aiohttp.ClientSession", return_value=session):
-        await cog.porn.callback(cog, mock_ctx, tag="hentai")
+        await cog.porn.callback(cog, mock_ctx, tag="boobs")
     assert "ανάκτηση" in mock_ctx.send.call_args.args[0]
 
 
@@ -50,7 +50,7 @@ async def test_porn_no_results(cog, mock_ctx):
 async def test_porn_success(cog, mock_ctx):
     session = make_aiohttp_response(json_data={"success": True, "message": "https://example.com/image.gif"})
     with patch("aiohttp.ClientSession", return_value=session):
-        await cog.porn.callback(cog, mock_ctx, tag="hentai")
+        await cog.porn.callback(cog, mock_ctx, tag="boobs")
     embed = mock_ctx.send.call_args.kwargs["embed"]
     assert embed.image.url == "https://example.com/image.gif"
 
