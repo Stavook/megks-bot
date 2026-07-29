@@ -20,6 +20,8 @@ FFMPEG_OPTIONS = {
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 
+INACTIVITY_TIMEOUT = 120
+
 
 class Song:
     def __init__(self, source, data, requester):
@@ -51,6 +53,7 @@ class GuildPlayer:
         self.queue = deque()
         self.current = None
         self.loop = False
+        self.timeout_task = None
 
 
 class Music(commands.Cog):
@@ -65,6 +68,17 @@ class Music(commands.Cog):
             self.players[guild_id] = GuildPlayer()
         return self.players[guild_id]
 
+    async def _disconnect_after_timeout(self, ctx):
+        await asyncio.sleep(INACTIVITY_TIMEOUT)
+        player = self.get_player(ctx.guild.id)
+        if ctx.voice_client and not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused():
+            player.queue.clear()
+            player.current = None
+            player.loop = False
+            player.timeout_task = None
+            await ctx.voice_client.disconnect()
+            await ctx.send("Αποσυνδέθηκα λόγω αδράνειας.")
+
     async def play_next(self, ctx):
         player = self.get_player(ctx.guild.id)
         if player.loop and player.current:
@@ -73,6 +87,7 @@ class Music(commands.Cog):
             song = player.queue.popleft()
         else:
             player.current = None
+            player.timeout_task = self.bot.loop.create_task(self._disconnect_after_timeout(ctx))
             return
 
         player.current = song
@@ -108,6 +123,9 @@ class Music(commands.Cog):
             player.queue.append(song)
             await searching.edit(content=f"Προστέθηκε στην ουρά: **{song.title}** (θέση {len(player.queue)})")
         else:
+            if player.timeout_task:
+                player.timeout_task.cancel()
+                player.timeout_task = None
             player.current = song
             ctx.voice_client.play(
                 song.source,
@@ -221,6 +239,9 @@ class Music(commands.Cog):
     async def stop(self, ctx):
         """Σταματάει την αναπαραγωγή, καθαρίζει την ουρά και αποσυνδέεται."""
         player = self.get_player(ctx.guild.id)
+        if player.timeout_task:
+            player.timeout_task.cancel()
+            player.timeout_task = None
         player.queue.clear()
         player.current = None
         player.loop = False
