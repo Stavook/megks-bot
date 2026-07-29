@@ -39,7 +39,14 @@ class Song:
         )
         if "entries" in data:
             data = data["entries"][0]
-        source = discord.FFmpegPCMAudio(data["url"], **FFMPEG_OPTIONS)
+
+        ffmpeg_options = dict(FFMPEG_OPTIONS)
+        headers = data.get("http_headers")
+        if headers:
+            header_lines = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
+            ffmpeg_options["before_options"] = f'-headers "{header_lines}" ' + ffmpeg_options["before_options"]
+
+        source = discord.FFmpegPCMAudio(data["url"], **ffmpeg_options)
         return cls(source, data, requester)
 
     def format_duration(self):
