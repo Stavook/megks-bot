@@ -3,6 +3,7 @@ from discord.ext import commands
 import yt_dlp
 import asyncio
 import logging
+import re
 import aiohttp
 from collections import deque
 
@@ -21,6 +22,8 @@ FFMPEG_OPTIONS = {
 }
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
+# Flat extraction: only metadata for search results, no format resolution (much faster).
+ytdl_search = yt_dlp.YoutubeDL({**YTDL_OPTIONS, "extract_flat": "in_playlist"})
 
 log = logging.getLogger("megks_bot.music")
 
@@ -30,20 +33,102 @@ LRCLIB_API = "https://lrclib.net/api/search"
 LYRICS_PAGE_SIZE = 3500
 LYRICS_VIEW_TIMEOUT = 120
 
-async def fetch_lyrics(song: str, artist: str = None):
+SEARCH_RESULTS = 5
+SEARCH_TIMEOUT = 30
+LYRICS_VARIANT_MIN_WORDS = 4
+
+FETCH_ERROR = "Δεν ήταν δυνατή η ανάκτηση του τραγουδιού. Δοκίμασε άλλο κομμάτι ή ξανά αργότερα."
+SEARCH_ERROR = "Η αναζήτηση απέτυχε. Δοκίμασε ξανά αργότερα."
+CONNECT_ERROR = "Δεν μπόρεσα να συνδεθώ στο voice channel."
+
+_URL_RE = re.compile(r"^https?://\S+$")
+
+
+def is_url(text: str) -> bool:
+    return bool(_URL_RE.match(text.strip()))
+
+
+def format_seconds(seconds) -> str:
+    m, s = divmod(int(seconds or 0), 60)
+    h, m = divmod(m, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def parse_lyrics_query(query: str):
+    """Splits "song | artist" into (song, artist); artist is None when not given.
+
+    Stray double quotes are dropped so the old `"song" artist` style still works.
+    """
+    song, _, artist = query.replace('"', "").partition("|")
+    song, artist = song.strip(), artist.strip()
+    return song, (artist or None)
+
+
+async def _lrclib_search(session, params):
     """Returns the first LRCLIB result that has plain lyrics, or None."""
-    params = {"track_name": song, "artist_name": artist} if artist else {"q": song}
-    timeout = aiohttp.ClientTimeout(total=10)
-    headers = {"User-Agent": "discord-music-bot"}
-    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-        async with session.get(LRCLIB_API, params=params) as resp:
-            if resp.status != 200:
-                raise aiohttp.ClientError(f"LRCLIB returned status {resp.status}")
-            results = await resp.json()
+    async with session.get(LRCLIB_API, params=params) as resp:
+        if resp.status != 200:
+            raise aiohttp.ClientError(f"LRCLIB returned status {resp.status}")
+        results = await resp.json()
     for result in results:
         if not result.get("instrumental") and (result.get("plainLyrics") or "").strip():
             return result
     return None
+
+
+async def fetch_lyrics(song: str, artist: str = None):
+    """Looks a song up on LRCLIB. With an artist, tries an exact title+artist
+    match first, then falls back to one combined free-text query."""
+    timeout = aiohttp.ClientTimeout(total=10)
+    headers = {"User-Agent": "discord-music-bot"}
+    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+        if artist:
+            result = await _lrclib_search(session, {"track_name": song, "artist_name": artist})
+            if result:
+                return result
+            return await _lrclib_search(session, {"q": f"{song} {artist}"})
+        return await _lrclib_search(session, {"q": song})
+
+
+def _flat_search(query: str, limit: int):
+    data = ytdl_search.extract_info(f"ytsearch{limit}:{query}", download=False)
+    return [e for e in (data.get("entries") or []) if e and e.get("id")]
+
+
+async def search_candidates(query: str, loop, limit: int = SEARCH_RESULTS):
+    """Top YouTube matches for a free-text query, as lightweight dicts.
+
+    Longer queries (likely lyric fragments) are also searched with "lyrics"
+    appended, since lyric videos carry the text in their titles/descriptions.
+    The result lists are interleaved and deduplicated.
+    """
+    queries = [query]
+    if len(query.split()) >= LYRICS_VARIANT_MIN_WORDS:
+        queries.append(f"{query} lyrics")
+
+    outcomes = await asyncio.gather(
+        *(loop.run_in_executor(None, _flat_search, q, limit) for q in queries),
+        return_exceptions=True,
+    )
+    result_lists = [o for o in outcomes if not isinstance(o, BaseException)]
+    if not result_lists:
+        raise outcomes[0]
+
+    candidates, seen = [], set()
+    for rank in range(limit):
+        for entries in result_lists:
+            if rank >= len(entries) or entries[rank]["id"] in seen:
+                continue
+            entry = entries[rank]
+            seen.add(entry["id"])
+            candidates.append({
+                "id": entry["id"],
+                "title": entry.get("title") or "Άγνωστο",
+                "url": f"https://www.youtube.com/watch?v={entry['id']}",
+                "duration": entry.get("duration"),
+                "uploader": entry.get("uploader") or entry.get("channel"),
+            })
+    return candidates[:limit]
 
 
 def paginate_lyrics(text: str, limit: int = LYRICS_PAGE_SIZE) -> list[str]:
@@ -66,14 +151,29 @@ def paginate_lyrics(text: str, limit: int = LYRICS_PAGE_SIZE) -> list[str]:
     return pages
 
 
-class LyricsPaginator(discord.ui.View):
+class AuthorOnlyView(discord.ui.View):
+    """A view that only the user who ran the command can interact with."""
+
+    def __init__(self, author, timeout):
+        super().__init__(timeout=timeout)
+        self.author = author
+        self.message = None
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message(
+                "Μόνο όποιος έδωσε την εντολή μπορεί να το χρησιμοποιήσει.", ephemeral=True
+            )
+            return False
+        return True
+
+
+class LyricsPaginator(AuthorOnlyView):
     def __init__(self, pages, title, author):
-        super().__init__(timeout=LYRICS_VIEW_TIMEOUT)
+        super().__init__(author, LYRICS_VIEW_TIMEOUT)
         self.pages = pages
         self.title = title
-        self.author = author
         self.index = 0
-        self.message = None
         self._sync_buttons()
 
     def make_embed(self):
@@ -89,14 +189,6 @@ class LyricsPaginator(discord.ui.View):
     def _sync_buttons(self):
         self.prev_button.disabled = self.index == 0
         self.next_button.disabled = self.index >= len(self.pages) - 1
-
-    async def interaction_check(self, interaction):
-        if interaction.user.id != self.author.id:
-            await interaction.response.send_message(
-                "Μόνο όποιος έδωσε την εντολή μπορεί να αλλάξει σελίδα.", ephemeral=True
-            )
-            return False
-        return True
 
     @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
     async def prev_button(self, interaction, button):
@@ -116,6 +208,48 @@ class LyricsPaginator(discord.ui.View):
         if self.message:
             try:
                 await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+
+
+class SearchPicker(AuthorOnlyView):
+    """Dropdown of search results; `on_select(candidate)` is awaited after a pick."""
+
+    def __init__(self, author, candidates, on_select):
+        super().__init__(author, SEARCH_TIMEOUT)
+        self.candidates = candidates
+        self.on_select = on_select
+        self.select = discord.ui.Select(
+            placeholder="Διάλεξε τραγούδι…",
+            options=[
+                discord.SelectOption(
+                    label=c["title"][:100],
+                    description=self._describe(c),
+                    value=str(i),
+                )
+                for i, c in enumerate(candidates)
+            ],
+        )
+        self.select.callback = self._on_pick
+        self.add_item(self.select)
+
+    @staticmethod
+    def _describe(candidate):
+        parts = [candidate.get("uploader")]
+        if candidate.get("duration"):
+            parts.append(format_seconds(candidate["duration"]))
+        return " • ".join(p for p in parts if p)[:100] or None
+
+    async def _on_pick(self, interaction):
+        candidate = self.candidates[int(self.select.values[0])]
+        self.stop()
+        await interaction.response.edit_message(content=f"Επιλέχθηκε: **{candidate['title']}**", view=None)
+        await self.on_select(candidate)
+
+    async def on_timeout(self):
+        if self.message:
+            try:
+                await self.message.edit(content="Η αναζήτηση έληξε.", view=None)
             except discord.HTTPException:
                 pass
 
@@ -147,9 +281,7 @@ class Song:
         return cls(source, data, requester)
 
     def format_duration(self):
-        m, s = divmod(self.duration, 60)
-        h, m = divmod(m, 60)
-        return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+        return format_seconds(self.duration)
 
 
 class GuildPlayer:
@@ -206,27 +338,33 @@ class Music(commands.Cog):
             embed.set_thumbnail(url=song.thumbnail)
         await ctx.send(embed=embed)
 
-    @commands.command(name="play", aliases=["p"])
-    async def play(self, ctx, *, query: str):
-        """Παίζει ένα τραγούδι από URL ή αναζήτηση."""
+    def _voice_error(self, ctx):
+        """Returns a user-facing message if the author can't use music right now, else None."""
         if not ctx.author.voice:
-            return await ctx.send("Δεν είσαι σε voice channel.")
+            return "Δεν είσαι σε voice channel."
         if ctx.voice_client and ctx.voice_client.is_playing() and ctx.voice_client.channel != ctx.author.voice.channel:
-            return await ctx.send(f"Παίζω ήδη μουσική στο **{ctx.voice_client.channel.name}**.")
+            return f"Παίζω ήδη μουσική στο **{ctx.voice_client.channel.name}**."
+        return None
+
+    async def _play_url(self, ctx, url, status):
+        """Connects if needed, fetches the song, then queues it or starts playback."""
         if not ctx.voice_client:
-            await ctx.author.voice.channel.connect()
+            try:
+                await ctx.author.voice.channel.connect()
+            except Exception:
+                log.exception("Failed to connect to voice channel")
+                return await status.edit(content=CONNECT_ERROR, view=None)
 
         player = self.get_player(ctx.guild.id)
-        searching = await ctx.send(f"Αναζήτηση για `{query}`...")
         try:
-            song = await Song.from_query(query, ctx.author, self.bot.loop)
+            song = await Song.from_query(url, ctx.author, self.bot.loop)
         except Exception:
-            log.exception("Failed to fetch song for query %r", query)
-            return await searching.edit(content="Δεν ήταν δυνατή η ανάκτηση του τραγουδιού. Δοκίμασε άλλο κομμάτι ή ξανά αργότερα.")
+            log.exception("Failed to fetch song for %r", url)
+            return await status.edit(content=FETCH_ERROR, view=None)
 
         if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
             player.queue.append(song)
-            await searching.edit(content=f"Προστέθηκε στην ουρά: **{song.title}** (θέση {len(player.queue)})")
+            await status.edit(content=f"Προστέθηκε στην ουρά: **{song.title}** (θέση {len(player.queue)})")
         else:
             if player.timeout_task:
                 player.timeout_task.cancel()
@@ -241,7 +379,39 @@ class Music(commands.Cog):
             embed.add_field(name="Ζητήθηκε από", value=song.requester.mention)
             if song.thumbnail:
                 embed.set_thumbnail(url=song.thumbnail)
-            await searching.edit(content=None, embed=embed)
+            await status.edit(content=None, embed=embed)
+
+    @commands.command(name="play", aliases=["p"])
+    async def play(self, ctx, *, query: str):
+        """Παίζει ένα τραγούδι από URL ή αναζήτηση (τίτλος ή κομμάτι από στίχους)."""
+        error = self._voice_error(ctx)
+        if error:
+            return await ctx.send(error)
+
+        status = await ctx.send(f"Αναζήτηση για `{query}`...")
+        if is_url(query):
+            return await self._play_url(ctx, query.strip(), status)
+
+        try:
+            candidates = await search_candidates(query, self.bot.loop)
+        except Exception:
+            log.exception("Search failed for query %r", query)
+            return await status.edit(content=SEARCH_ERROR)
+        if not candidates:
+            return await status.edit(content=f"Δεν βρέθηκαν αποτελέσματα για: `{query}`")
+        if len(candidates) == 1:
+            return await self._play_url(ctx, candidates[0]["url"], status)
+
+        async def on_select(candidate):
+            # The user may have left voice while the dropdown was open.
+            error = self._voice_error(ctx)
+            if error:
+                return await status.edit(content=error, view=None)
+            await self._play_url(ctx, candidate["url"], status)
+
+        picker = SearchPicker(ctx.author, candidates, on_select)
+        picker.message = status
+        await status.edit(content=f"Αποτελέσματα για `{query}` — διάλεξε ένα:", view=picker)
 
     @commands.command(name="pause")
     async def pause(self, ctx):
@@ -309,8 +479,12 @@ class Music(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name="lyrics", aliases=["ly"])
-    async def lyrics(self, ctx, song: str, *, artist: str = None):
-        """Δείχνει τους στίχους ενός τραγουδιού. Χρήση: !lyrics "τίτλος" [καλλιτέχνης]"""
+    async def lyrics(self, ctx, *, query: str):
+        """Δείχνει τους στίχους ενός τραγουδιού. Χρήση: !lyrics τίτλος [| καλλιτέχνης]"""
+        song, artist = parse_lyrics_query(query)
+        if not song:
+            return await ctx.send("Δώσε τον τίτλο ενός τραγουδιού.")
+
         try:
             async with ctx.typing():
                 result = await fetch_lyrics(song, artist)

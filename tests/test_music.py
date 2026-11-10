@@ -4,10 +4,15 @@ from collections import deque
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import asyncio
 import aiohttp
+from unittest.mock import PropertyMock
 
+import cogs.music as music_module
 from cogs.music import (
-    Music, GuildPlayer, Song, LyricsPaginator, paginate_lyrics,
+    Music, GuildPlayer, Song, LyricsPaginator, SearchPicker, paginate_lyrics,
+    parse_lyrics_query, is_url, search_candidates, format_seconds,
+    FETCH_ERROR, SEARCH_ERROR, CONNECT_ERROR,
 )
 
 
@@ -84,7 +89,7 @@ async def test_play_adds_to_queue(cog, mock_ctx, mock_voice_client):
 
     song = make_song()
     with patch("cogs.music.Song.from_query", AsyncMock(return_value=song)):
-        await cog.play.callback(cog, mock_ctx, query="test song")
+        await cog.play.callback(cog, mock_ctx, query="https://www.youtube.com/watch?v=abc123")
 
     player = cog.get_player(mock_ctx.guild.id)
     assert len(player.queue) == 1
@@ -103,7 +108,7 @@ async def test_play_starts_playback(cog, mock_ctx, mock_voice_client):
 
     song = make_song()
     with patch("cogs.music.Song.from_query", AsyncMock(return_value=song)):
-        await cog.play.callback(cog, mock_ctx, query="test song")
+        await cog.play.callback(cog, mock_ctx, query="https://www.youtube.com/watch?v=abc123")
 
     mock_voice_client.play.assert_called_once()
     assert cog.get_player(mock_ctx.guild.id).current == song
@@ -118,7 +123,7 @@ async def test_play_fetch_error(cog, mock_ctx, mock_voice_client):
     mock_ctx.send = AsyncMock(return_value=searching_msg)
 
     with patch("cogs.music.Song.from_query", AsyncMock(side_effect=Exception("Network error"))):
-        await cog.play.callback(cog, mock_ctx, query="bad query")
+        await cog.play.callback(cog, mock_ctx, query="https://www.youtube.com/watch?v=abc123")
 
     assert "ανάκτηση" in searching_msg.edit.call_args.kwargs["content"]
     assert "Network error" not in searching_msg.edit.call_args.kwargs["content"]
@@ -342,7 +347,7 @@ def test_paginate_lyrics_splits_overlong_line():
 async def test_lyrics_song_only(cog, mock_ctx):
     session = make_lrclib_session(results=[lrclib_result(track="Track", artist="Artist")])
     with patch("aiohttp.ClientSession", return_value=session):
-        await cog.lyrics.callback(cog, mock_ctx, song="some song")
+        await cog.lyrics.callback(cog, mock_ctx, query="some song")
     assert session.get.call_args.kwargs["params"] == {"q": "some song"}
     kwargs = mock_ctx.send.call_args.kwargs
     assert kwargs["embed"].title == "Track - Artist"
@@ -354,7 +359,7 @@ async def test_lyrics_song_only(cog, mock_ctx):
 async def test_lyrics_title_does_not_repeat_artist(cog, mock_ctx):
     session = make_lrclib_session(results=[lrclib_result(track="Song - Artist", artist="Artist")])
     with patch("aiohttp.ClientSession", return_value=session):
-        await cog.lyrics.callback(cog, mock_ctx, song="song")
+        await cog.lyrics.callback(cog, mock_ctx, query="song")
     assert mock_ctx.send.call_args.kwargs["embed"].title == "Song - Artist"
 
 
@@ -362,7 +367,7 @@ async def test_lyrics_title_does_not_repeat_artist(cog, mock_ctx):
 async def test_lyrics_song_and_artist(cog, mock_ctx):
     session = make_lrclib_session(results=[lrclib_result()])
     with patch("aiohttp.ClientSession", return_value=session):
-        await cog.lyrics.callback(cog, mock_ctx, song="some song", artist="some artist")
+        await cog.lyrics.callback(cog, mock_ctx, query="some song | some artist")
     assert session.get.call_args.kwargs["params"] == {
         "track_name": "some song", "artist_name": "some artist",
     }
@@ -373,7 +378,7 @@ async def test_lyrics_ignores_current_song(cog, mock_ctx):
     cog.get_player(mock_ctx.guild.id).current = make_song(title="Playing Now")
     session = make_lrclib_session(results=[lrclib_result()])
     with patch("aiohttp.ClientSession", return_value=session):
-        await cog.lyrics.callback(cog, mock_ctx, song="other")
+        await cog.lyrics.callback(cog, mock_ctx, query="other")
     assert session.get.call_args.kwargs["params"] == {"q": "other"}
 
 
@@ -381,7 +386,7 @@ async def test_lyrics_ignores_current_song(cog, mock_ctx):
 async def test_lyrics_not_found(cog, mock_ctx):
     session = make_lrclib_session(results=[])
     with patch("aiohttp.ClientSession", return_value=session):
-        await cog.lyrics.callback(cog, mock_ctx, song="gibberish")
+        await cog.lyrics.callback(cog, mock_ctx, query="gibberish")
     assert "Δεν βρέθηκαν" in mock_ctx.send.call_args.args[0]
 
 
@@ -389,7 +394,7 @@ async def test_lyrics_not_found(cog, mock_ctx):
 async def test_lyrics_skips_instrumental_results(cog, mock_ctx):
     session = make_lrclib_session(results=[lrclib_result(lyrics="", instrumental=True)])
     with patch("aiohttp.ClientSession", return_value=session):
-        await cog.lyrics.callback(cog, mock_ctx, song="instrumental")
+        await cog.lyrics.callback(cog, mock_ctx, query="instrumental")
     assert "Δεν βρέθηκαν" in mock_ctx.send.call_args.args[0]
 
 
@@ -397,7 +402,7 @@ async def test_lyrics_skips_instrumental_results(cog, mock_ctx):
 async def test_lyrics_api_error_status(cog, mock_ctx):
     session = make_lrclib_session(status=500)
     with patch("aiohttp.ClientSession", return_value=session):
-        await cog.lyrics.callback(cog, mock_ctx, song="x")
+        await cog.lyrics.callback(cog, mock_ctx, query="x")
     assert "ανάκτηση" in mock_ctx.send.call_args.args[0]
 
 
@@ -405,7 +410,7 @@ async def test_lyrics_api_error_status(cog, mock_ctx):
 async def test_lyrics_network_error(cog, mock_ctx):
     session = make_lrclib_session(error=aiohttp.ClientConnectionError())
     with patch("aiohttp.ClientSession", return_value=session):
-        await cog.lyrics.callback(cog, mock_ctx, song="x")
+        await cog.lyrics.callback(cog, mock_ctx, query="x")
     assert "ανάκτηση" in mock_ctx.send.call_args.args[0]
 
 
@@ -414,7 +419,7 @@ async def test_lyrics_long_paginates(cog, mock_ctx):
     long_lyrics = "\n".join(["la la la la la la la la"] * 600)
     session = make_lrclib_session(results=[lrclib_result(lyrics=long_lyrics)])
     with patch("aiohttp.ClientSession", return_value=session):
-        await cog.lyrics.callback(cog, mock_ctx, song="long")
+        await cog.lyrics.callback(cog, mock_ctx, query="long")
     kwargs = mock_ctx.send.call_args.kwargs
     view = kwargs["view"]
     assert isinstance(view, LyricsPaginator)
@@ -446,3 +451,329 @@ async def test_lyrics_paginator_next_and_prev(mock_author):
     assert view.index == 2 and view.next_button.disabled
     await view.prev_button.callback(interaction)
     assert view.index == 1
+
+
+
+# --- lyrics: free-text parsing ---
+
+@pytest.mark.parametrize("raw, expected", [
+    ("where the hood at", ("where the hood at", None)),
+    ("dmx where the hood at", ("dmx where the hood at", None)),
+    ("where the hood at | dmx", ("where the hood at", "dmx")),
+    ("  where the hood at   |   dmx  ", ("where the hood at", "dmx")),
+    ('"bohemian rhapsody" queen', ("bohemian rhapsody queen", None)),
+    ("song |", ("song", None)),
+    ("| artist", ("", "artist")),
+    ("a | b | c", ("a", "b | c")),
+])
+def test_parse_lyrics_query(raw, expected):
+    assert parse_lyrics_query(raw) == expected
+
+
+@pytest.mark.asyncio
+async def test_lyrics_multiword_without_artist_is_one_query(cog, mock_ctx):
+    """Regression: `!lyrics dmx where the hood at` used to split into song=dmx, artist=where the hood at."""
+    session = make_lrclib_session(results=[lrclib_result()])
+    with patch("aiohttp.ClientSession", return_value=session):
+        await cog.lyrics.callback(cog, mock_ctx, query="dmx where the hood at")
+    assert session.get.call_count == 1
+    assert session.get.call_args.kwargs["params"] == {"q": "dmx where the hood at"}
+
+
+@pytest.mark.asyncio
+async def test_lyrics_pipe_artist_uses_exact_match(cog, mock_ctx):
+    session = make_lrclib_session(results=[lrclib_result()])
+    with patch("aiohttp.ClientSession", return_value=session):
+        await cog.lyrics.callback(cog, mock_ctx, query="where the hood at | dmx")
+    assert session.get.call_args.kwargs["params"] == {"track_name": "where the hood at", "artist_name": "dmx"}
+
+
+@pytest.mark.asyncio
+async def test_lyrics_artist_search_falls_back_to_combined_query(cog, mock_ctx):
+    def response(results):
+        r = AsyncMock()
+        r.status = 200
+        r.json = AsyncMock(return_value=results)
+        r.__aenter__ = AsyncMock(return_value=r)
+        r.__aexit__ = AsyncMock(return_value=False)
+        return r
+
+    session = AsyncMock()
+    session.get = MagicMock(side_effect=[response([]), response([lrclib_result(track="Where the Hood At?", artist="DMX")])])
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    with patch("aiohttp.ClientSession", return_value=session):
+        await cog.lyrics.callback(cog, mock_ctx, query="where the hood at | dmx")
+    assert [c.kwargs["params"] for c in session.get.call_args_list] == [
+        {"track_name": "where the hood at", "artist_name": "dmx"},
+        {"q": "where the hood at dmx"},
+    ]
+    assert mock_ctx.send.call_args.kwargs["embed"].title == "Where the Hood At? - DMX"
+
+
+@pytest.mark.asyncio
+async def test_lyrics_empty_song_is_rejected(cog, mock_ctx):
+    with patch("aiohttp.ClientSession") as client:
+        await cog.lyrics.callback(cog, mock_ctx, query="| dmx")
+    client.assert_not_called()
+    assert "τίτλο" in mock_ctx.send.call_args.args[0]
+
+
+# --- helpers ---
+
+@pytest.mark.parametrize("text, expected", [
+    ("https://www.youtube.com/watch?v=abc", True),
+    ("http://youtu.be/abc", True),
+    ("  https://youtu.be/abc  ", True),
+    ("daft punk one more time", False),
+    ("https://example.com with spaces", False),
+    ("youtube.com/watch?v=abc", False),
+])
+def test_is_url(text, expected):
+    assert is_url(text) is expected
+
+
+def test_format_seconds():
+    assert format_seconds(185) == "3:05"
+    assert format_seconds(3661) == "1:01:01"
+    assert format_seconds(185.7) == "3:05"
+    assert format_seconds(None) == "0:00"
+
+
+# --- search_candidates ---
+
+def entry(vid, title=None, uploader="Chan", duration=200):
+    return {"id": vid, "title": title or f"Title {vid}", "uploader": uploader, "duration": duration}
+
+
+def fake_ytdl(results_by_query):
+    ytdl = MagicMock()
+
+    def extract_info(query, download=False):
+        value = results_by_query[query]
+        if isinstance(value, Exception):
+            raise value
+        return {"entries": value}
+
+    ytdl.extract_info.side_effect = extract_info
+    return ytdl
+
+
+@pytest.mark.asyncio
+async def test_search_short_query_runs_one_search():
+    ytdl = fake_ytdl({"ytsearch5:daft punk": [entry("a"), entry("b")]})
+    with patch.object(music_module, "ytdl_search", ytdl):
+        result = await search_candidates("daft punk", asyncio.get_running_loop())
+    assert [c["id"] for c in result] == ["a", "b"]
+    assert ytdl.extract_info.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_search_long_query_adds_lyrics_variant_interleaved_and_deduped():
+    q = "caught in a landslide no escape"
+    ytdl = fake_ytdl({
+        f"ytsearch5:{q}": [entry("a"), entry("b"), entry("c")],
+        f"ytsearch5:{q} lyrics": [entry("b"), entry("d"), entry("a")],
+    })
+    with patch.object(music_module, "ytdl_search", ytdl):
+        result = await search_candidates(q, asyncio.get_running_loop())
+    assert [c["id"] for c in result] == ["a", "b", "d", "c"]
+    assert ytdl.extract_info.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_search_caps_at_limit_and_builds_urls():
+    ytdl = fake_ytdl({"ytsearch3:x": [entry(str(i)) for i in range(10)]})
+    with patch.object(music_module, "ytdl_search", ytdl):
+        result = await search_candidates("x", asyncio.get_running_loop(), limit=3)
+    assert len(result) == 3
+    assert result[0]["url"] == "https://www.youtube.com/watch?v=0"
+
+
+@pytest.mark.asyncio
+async def test_search_tolerates_one_failed_variant():
+    q = "one two three four"
+    ytdl = fake_ytdl({f"ytsearch5:{q}": [entry("a")], f"ytsearch5:{q} lyrics": RuntimeError("blocked")})
+    with patch.object(music_module, "ytdl_search", ytdl):
+        result = await search_candidates(q, asyncio.get_running_loop())
+    assert [c["id"] for c in result] == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_search_raises_when_every_search_fails():
+    ytdl = fake_ytdl({"ytsearch5:x": RuntimeError("blocked")})
+    with patch.object(music_module, "ytdl_search", ytdl):
+        with pytest.raises(RuntimeError):
+            await search_candidates("x", asyncio.get_running_loop())
+
+
+@pytest.mark.asyncio
+async def test_search_skips_entries_without_id_and_uses_channel_fallback():
+    ytdl = fake_ytdl({"ytsearch5:x": [None, {"title": "no id"}, {"id": "ok", "channel": "Some Channel"}]})
+    with patch.object(music_module, "ytdl_search", ytdl):
+        result = await search_candidates("x", asyncio.get_running_loop())
+    assert len(result) == 1
+    assert result[0]["uploader"] == "Some Channel"
+    assert result[0]["title"] == "Άγνωστο"
+
+
+# --- play: search picker ---
+
+def make_candidates(n=3):
+    return [
+        {"id": str(i), "title": f"Song {i}", "url": f"https://www.youtube.com/watch?v={i}",
+         "duration": 200, "uploader": f"Chan {i}"}
+        for i in range(n)
+    ]
+
+
+@pytest.fixture
+def play_env(cog, mock_ctx, mock_voice_client):
+    mock_ctx.voice_client = mock_voice_client
+    mock_voice_client.is_playing.return_value = False
+    mock_voice_client.is_paused.return_value = False
+    mock_voice_client.channel = mock_ctx.author.voice.channel
+    status = AsyncMock()
+    mock_ctx.send = AsyncMock(return_value=status)
+    return status
+
+
+@pytest.mark.asyncio
+async def test_play_text_query_shows_picker(cog, mock_ctx, play_env):
+    status = play_env
+    with patch("cogs.music.search_candidates", AsyncMock(return_value=make_candidates(3))), \
+         patch("cogs.music.Song.from_query", AsyncMock()) as from_query:
+        await cog.play.callback(cog, mock_ctx, query="some lyrics i remember")
+    view = status.edit.call_args.kwargs["view"]
+    assert isinstance(view, SearchPicker)
+    assert [o.label for o in view.select.options] == ["Song 0", "Song 1", "Song 2"]
+    assert view.select.options[0].description == "Chan 0 • 3:20"
+    assert view.message is status
+    from_query.assert_not_called()       # nothing plays until the user picks
+
+
+@pytest.mark.asyncio
+async def test_play_text_query_does_not_connect_before_pick(cog, mock_ctx, play_env):
+    mock_ctx.voice_client = None
+    with patch("cogs.music.search_candidates", AsyncMock(return_value=make_candidates(3))):
+        await cog.play.callback(cog, mock_ctx, query="some lyrics i remember")
+    mock_ctx.author.voice.channel.connect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_play_single_result_plays_directly(cog, mock_ctx, play_env, mock_voice_client):
+    candidates = make_candidates(1)
+    song = make_song()
+    with patch("cogs.music.search_candidates", AsyncMock(return_value=candidates)), \
+         patch("cogs.music.Song.from_query", AsyncMock(return_value=song)) as from_query:
+        await cog.play.callback(cog, mock_ctx, query="rare song")
+    assert from_query.call_args.args[0] == candidates[0]["url"]
+    mock_voice_client.play.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_play_no_results(cog, mock_ctx, play_env):
+    with patch("cogs.music.search_candidates", AsyncMock(return_value=[])):
+        await cog.play.callback(cog, mock_ctx, query="zzzz")
+    assert "Δεν βρέθηκαν αποτελέσματα" in play_env.edit.call_args.kwargs["content"]
+
+
+@pytest.mark.asyncio
+async def test_play_search_error_is_generic(cog, mock_ctx, play_env):
+    with patch("cogs.music.search_candidates", AsyncMock(side_effect=RuntimeError("secret yt-dlp detail"))):
+        await cog.play.callback(cog, mock_ctx, query="anything")
+    assert play_env.edit.call_args.kwargs["content"] == SEARCH_ERROR
+
+
+@pytest.mark.asyncio
+async def test_play_url_skips_search(cog, mock_ctx, play_env, mock_voice_client):
+    with patch("cogs.music.search_candidates", AsyncMock()) as search, \
+         patch("cogs.music.Song.from_query", AsyncMock(return_value=make_song())):
+        await cog.play.callback(cog, mock_ctx, query="https://youtu.be/abc")
+    search.assert_not_called()
+    mock_voice_client.play.assert_called_once()
+
+
+async def open_picker(cog, mock_ctx, status, n=3):
+    with patch("cogs.music.search_candidates", AsyncMock(return_value=make_candidates(n))):
+        await cog.play.callback(cog, mock_ctx, query="some lyrics i remember")
+    return status.edit.call_args.kwargs["view"]
+
+
+def pick(picker, index):
+    interaction = MagicMock()
+    interaction.response.edit_message = AsyncMock()
+    return interaction, patch.object(type(picker.select), "values", new_callable=PropertyMock, return_value=[str(index)])
+
+
+@pytest.mark.asyncio
+async def test_picker_selection_plays_chosen_song(cog, mock_ctx, play_env, mock_voice_client):
+    picker = await open_picker(cog, mock_ctx, play_env)
+    interaction, values = pick(picker, 1)
+    song = make_song("Chosen")
+    with values, patch("cogs.music.Song.from_query", AsyncMock(return_value=song)) as from_query:
+        await picker._on_pick(interaction)
+    assert interaction.response.edit_message.call_args.kwargs["view"] is None
+    assert "Song 1" in interaction.response.edit_message.call_args.kwargs["content"]
+    assert from_query.call_args.args[0] == "https://www.youtube.com/watch?v=1"
+    mock_voice_client.play.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_picker_selection_queues_when_already_playing(cog, mock_ctx, play_env, mock_voice_client):
+    picker = await open_picker(cog, mock_ctx, play_env)
+    mock_voice_client.is_playing.return_value = True
+    interaction, values = pick(picker, 0)
+    with values, patch("cogs.music.Song.from_query", AsyncMock(return_value=make_song())):
+        await picker._on_pick(interaction)
+    assert len(cog.get_player(mock_ctx.guild.id).queue) == 1
+    mock_voice_client.play.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_picker_selection_after_leaving_voice(cog, mock_ctx, play_env, mock_voice_client):
+    picker = await open_picker(cog, mock_ctx, play_env)
+    mock_ctx.author.voice = None
+    interaction, values = pick(picker, 0)
+    with values, patch("cogs.music.Song.from_query", AsyncMock()) as from_query:
+        await picker._on_pick(interaction)
+    from_query.assert_not_called()
+    mock_voice_client.play.assert_not_called()
+    assert "voice channel" in play_env.edit.call_args.kwargs["content"]
+
+
+@pytest.mark.asyncio
+async def test_picker_only_author_can_use(cog, mock_ctx, play_env):
+    picker = await open_picker(cog, mock_ctx, play_env)
+    intruder = MagicMock()
+    intruder.user.id = 999
+    intruder.response.send_message = AsyncMock()
+    assert await picker.interaction_check(intruder) is False
+    assert intruder.response.send_message.call_args.kwargs["ephemeral"] is True
+    owner = MagicMock()
+    owner.user.id = mock_ctx.author.id
+    assert await picker.interaction_check(owner) is True
+
+
+@pytest.mark.asyncio
+async def test_picker_timeout_expires_message(cog, mock_ctx, play_env):
+    picker = await open_picker(cog, mock_ctx, play_env)
+    await picker.on_timeout()
+    kwargs = play_env.edit.call_args.kwargs
+    assert "έληξε" in kwargs["content"] and kwargs["view"] is None
+
+
+@pytest.mark.asyncio
+async def test_picker_option_limits(mock_author):
+    candidates = [{"id": "1", "title": "T" * 300, "url": "u", "duration": None, "uploader": None}]
+    picker = SearchPicker(mock_author, candidates, AsyncMock())
+    assert len(picker.select.options[0].label) == 100
+    assert picker.select.options[0].description is None
+
+
+@pytest.mark.asyncio
+async def test_play_connect_failure_is_clean(cog, mock_ctx, play_env):
+    mock_ctx.voice_client = None
+    mock_ctx.author.voice.channel.connect = AsyncMock(side_effect=Exception("opus lib missing"))
+    await cog.play.callback(cog, mock_ctx, query="https://youtu.be/abc")
+    assert play_env.edit.call_args.kwargs["content"] == CONNECT_ERROR
