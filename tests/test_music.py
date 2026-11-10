@@ -121,6 +121,7 @@ async def test_play_fetch_error(cog, mock_ctx, mock_voice_client):
         await cog.play.callback(cog, mock_ctx, query="bad query")
 
     assert "ανάκτηση" in searching_msg.edit.call_args.kwargs["content"]
+    assert "Network error" not in searching_msg.edit.call_args.kwargs["content"]
 
 
 # --- pause ---

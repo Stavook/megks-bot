@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import yt_dlp
 import asyncio
+import logging
 import aiohttp
 from collections import deque
 
@@ -20,6 +21,8 @@ FFMPEG_OPTIONS = {
 }
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
+
+log = logging.getLogger("megks_bot.music")
 
 INACTIVITY_TIMEOUT = 120
 
@@ -217,8 +220,9 @@ class Music(commands.Cog):
         searching = await ctx.send(f"Αναζήτηση για `{query}`...")
         try:
             song = await Song.from_query(query, ctx.author, self.bot.loop)
-        except Exception as e:
-            return await searching.edit(content=f"Δεν ήταν δυνατή η ανάκτηση: {e}")
+        except Exception:
+            log.exception("Failed to fetch song for query %r", query)
+            return await searching.edit(content="Δεν ήταν δυνατή η ανάκτηση του τραγουδιού. Δοκίμασε άλλο κομμάτι ή ξανά αργότερα.")
 
         if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
             player.queue.append(song)
@@ -311,6 +315,7 @@ class Music(commands.Cog):
             async with ctx.typing():
                 result = await fetch_lyrics(song, artist)
         except (aiohttp.ClientError, asyncio.TimeoutError):
+            log.warning("Lyrics lookup failed for %r / %r", song, artist, exc_info=True)
             return await ctx.send("Δεν ήταν δυνατή η ανάκτηση, δοκίμασε ξανά αργότερα.")
 
         if not result:
