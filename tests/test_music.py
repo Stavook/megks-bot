@@ -4,7 +4,11 @@ from collections import deque
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from cogs.music import Music, GuildPlayer, Song
+import aiohttp
+
+from cogs.music import (
+    Music, GuildPlayer, Song, LyricsPaginator, paginate_lyrics,
+)
 
 
 @pytest.fixture
@@ -294,3 +298,150 @@ async def test_shuffle_too_few(cog, mock_ctx):
     player.queue.append(make_song())
     await cog.shuffle.callback(cog, mock_ctx)
     assert "τουλάχιστον 2" in mock_ctx.send.call_args.args[0]
+
+# --- lyrics helpers ---
+
+def make_lrclib_session(status=200, results=None, error=None):
+    response = AsyncMock()
+    response.status = status
+    response.json = AsyncMock(return_value=results if results is not None else [])
+    response.__aenter__ = AsyncMock(return_value=response)
+    response.__aexit__ = AsyncMock(return_value=False)
+    session = AsyncMock()
+    session.get = MagicMock(return_value=response, side_effect=error)
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    return session
+
+
+def lrclib_result(lyrics="line one\nline two", track="Song", artist="Artist", instrumental=False):
+    return {"trackName": track, "artistName": artist, "plainLyrics": lyrics, "instrumental": instrumental}
+
+
+def test_paginate_lyrics_short():
+    assert paginate_lyrics("a\nb\nc") == ["a\nb\nc"]
+
+
+def test_paginate_lyrics_splits_on_lines_within_limit():
+    text = "\n".join(["x" * 40] * 30)
+    pages = paginate_lyrics(text, limit=200)
+    assert len(pages) > 1
+    assert all(len(p) <= 200 for p in pages)
+    assert "\n".join(pages) == text
+
+
+def test_paginate_lyrics_splits_overlong_line():
+    pages = paginate_lyrics("y" * 450, limit=200)
+    assert [len(p) for p in pages] == [200, 200, 50]
+
+
+# --- lyrics ---
+
+@pytest.mark.asyncio
+async def test_lyrics_song_only(cog, mock_ctx):
+    session = make_lrclib_session(results=[lrclib_result(track="Track", artist="Artist")])
+    with patch("aiohttp.ClientSession", return_value=session):
+        await cog.lyrics.callback(cog, mock_ctx, song="some song")
+    assert session.get.call_args.kwargs["params"] == {"q": "some song"}
+    kwargs = mock_ctx.send.call_args.kwargs
+    assert kwargs["embed"].title == "Track - Artist"
+    assert kwargs["embed"].description == "line one\nline two"
+    assert "view" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_lyrics_title_does_not_repeat_artist(cog, mock_ctx):
+    session = make_lrclib_session(results=[lrclib_result(track="Song - Artist", artist="Artist")])
+    with patch("aiohttp.ClientSession", return_value=session):
+        await cog.lyrics.callback(cog, mock_ctx, song="song")
+    assert mock_ctx.send.call_args.kwargs["embed"].title == "Song - Artist"
+
+
+@pytest.mark.asyncio
+async def test_lyrics_song_and_artist(cog, mock_ctx):
+    session = make_lrclib_session(results=[lrclib_result()])
+    with patch("aiohttp.ClientSession", return_value=session):
+        await cog.lyrics.callback(cog, mock_ctx, song="some song", artist="some artist")
+    assert session.get.call_args.kwargs["params"] == {
+        "track_name": "some song", "artist_name": "some artist",
+    }
+
+
+@pytest.mark.asyncio
+async def test_lyrics_ignores_current_song(cog, mock_ctx):
+    cog.get_player(mock_ctx.guild.id).current = make_song(title="Playing Now")
+    session = make_lrclib_session(results=[lrclib_result()])
+    with patch("aiohttp.ClientSession", return_value=session):
+        await cog.lyrics.callback(cog, mock_ctx, song="other")
+    assert session.get.call_args.kwargs["params"] == {"q": "other"}
+
+
+@pytest.mark.asyncio
+async def test_lyrics_not_found(cog, mock_ctx):
+    session = make_lrclib_session(results=[])
+    with patch("aiohttp.ClientSession", return_value=session):
+        await cog.lyrics.callback(cog, mock_ctx, song="gibberish")
+    assert "Δεν βρέθηκαν" in mock_ctx.send.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_lyrics_skips_instrumental_results(cog, mock_ctx):
+    session = make_lrclib_session(results=[lrclib_result(lyrics="", instrumental=True)])
+    with patch("aiohttp.ClientSession", return_value=session):
+        await cog.lyrics.callback(cog, mock_ctx, song="instrumental")
+    assert "Δεν βρέθηκαν" in mock_ctx.send.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_lyrics_api_error_status(cog, mock_ctx):
+    session = make_lrclib_session(status=500)
+    with patch("aiohttp.ClientSession", return_value=session):
+        await cog.lyrics.callback(cog, mock_ctx, song="x")
+    assert "ανάκτηση" in mock_ctx.send.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_lyrics_network_error(cog, mock_ctx):
+    session = make_lrclib_session(error=aiohttp.ClientConnectionError())
+    with patch("aiohttp.ClientSession", return_value=session):
+        await cog.lyrics.callback(cog, mock_ctx, song="x")
+    assert "ανάκτηση" in mock_ctx.send.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_lyrics_long_paginates(cog, mock_ctx):
+    long_lyrics = "\n".join(["la la la la la la la la"] * 600)
+    session = make_lrclib_session(results=[lrclib_result(lyrics=long_lyrics)])
+    with patch("aiohttp.ClientSession", return_value=session):
+        await cog.lyrics.callback(cog, mock_ctx, song="long")
+    kwargs = mock_ctx.send.call_args.kwargs
+    view = kwargs["view"]
+    assert isinstance(view, LyricsPaginator)
+    assert len(view.pages) > 1
+    assert "Σελίδα 1/" in kwargs["embed"].footer.text
+    assert view.prev_button.disabled and not view.next_button.disabled
+
+
+@pytest.mark.asyncio
+async def test_lyrics_paginator_only_author_can_press(mock_author):
+    view = LyricsPaginator(["a", "b"], "T", mock_author)
+    intruder = MagicMock()
+    intruder.user.id = 999
+    intruder.response.send_message = AsyncMock()
+    assert await view.interaction_check(intruder) is False
+    owner = MagicMock()
+    owner.user.id = mock_author.id
+    assert await view.interaction_check(owner) is True
+
+
+@pytest.mark.asyncio
+async def test_lyrics_paginator_next_and_prev(mock_author):
+    view = LyricsPaginator(["a", "b", "c"], "T", mock_author)
+    interaction = MagicMock()
+    interaction.response.edit_message = AsyncMock()
+    await view.next_button.callback(interaction)
+    assert view.index == 1
+    await view.next_button.callback(interaction)
+    assert view.index == 2 and view.next_button.disabled
+    await view.prev_button.callback(interaction)
+    assert view.index == 1

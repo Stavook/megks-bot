@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import yt_dlp
 import asyncio
+import aiohttp
 from collections import deque
 
 YTDL_OPTIONS = {
@@ -21,6 +22,99 @@ FFMPEG_OPTIONS = {
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 
 INACTIVITY_TIMEOUT = 120
+
+LRCLIB_API = "https://lrclib.net/api/search"
+LYRICS_PAGE_SIZE = 3500
+LYRICS_VIEW_TIMEOUT = 120
+
+async def fetch_lyrics(song: str, artist: str = None):
+    """Returns the first LRCLIB result that has plain lyrics, or None."""
+    params = {"track_name": song, "artist_name": artist} if artist else {"q": song}
+    timeout = aiohttp.ClientTimeout(total=10)
+    headers = {"User-Agent": "discord-music-bot"}
+    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+        async with session.get(LRCLIB_API, params=params) as resp:
+            if resp.status != 200:
+                raise aiohttp.ClientError(f"LRCLIB returned status {resp.status}")
+            results = await resp.json()
+    for result in results:
+        if not result.get("instrumental") and (result.get("plainLyrics") or "").strip():
+            return result
+    return None
+
+
+def paginate_lyrics(text: str, limit: int = LYRICS_PAGE_SIZE) -> list[str]:
+    """Splits lyrics into pages of at most `limit` characters, on line boundaries."""
+    pages = []
+    current = ""
+    for line in text.strip().splitlines():
+        while len(line) > limit:
+            if current:
+                pages.append(current.rstrip("\n"))
+                current = ""
+            pages.append(line[:limit])
+            line = line[limit:]
+        if len(current) + len(line) + 1 > limit:
+            pages.append(current.rstrip("\n"))
+            current = ""
+        current += line + "\n"
+    if current.strip():
+        pages.append(current.rstrip("\n"))
+    return pages
+
+
+class LyricsPaginator(discord.ui.View):
+    def __init__(self, pages, title, author):
+        super().__init__(timeout=LYRICS_VIEW_TIMEOUT)
+        self.pages = pages
+        self.title = title
+        self.author = author
+        self.index = 0
+        self.message = None
+        self._sync_buttons()
+
+    def make_embed(self):
+        embed = discord.Embed(
+            title=self.title[:256],
+            description=self.pages[self.index],
+            color=discord.Color.blurple(),
+        )
+        if len(self.pages) > 1:
+            embed.set_footer(text=f"Σελίδα {self.index + 1}/{len(self.pages)}")
+        return embed
+
+    def _sync_buttons(self):
+        self.prev_button.disabled = self.index == 0
+        self.next_button.disabled = self.index >= len(self.pages) - 1
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message(
+                "Μόνο όποιος έδωσε την εντολή μπορεί να αλλάξει σελίδα.", ephemeral=True
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
+    async def prev_button(self, interaction, button):
+        self.index = max(0, self.index - 1)
+        self._sync_buttons()
+        await interaction.response.edit_message(embed=self.make_embed(), view=self)
+
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction, button):
+        self.index = min(len(self.pages) - 1, self.index + 1)
+        self._sync_buttons()
+        await interaction.response.edit_message(embed=self.make_embed(), view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
 
 
 class Song:
@@ -209,6 +303,29 @@ class Music(commands.Cog):
         if song.thumbnail:
             embed.set_thumbnail(url=song.thumbnail)
         await ctx.send(embed=embed)
+
+    @commands.command(name="lyrics", aliases=["ly"])
+    async def lyrics(self, ctx, song: str, *, artist: str = None):
+        """Δείχνει τους στίχους ενός τραγουδιού. Χρήση: !lyrics "τίτλος" [καλλιτέχνης]"""
+        try:
+            async with ctx.typing():
+                result = await fetch_lyrics(song, artist)
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            return await ctx.send("Δεν ήταν δυνατή η ανάκτηση, δοκίμασε ξανά αργότερα.")
+
+        if not result:
+            label = f"{song} - {artist}" if artist else song
+            return await ctx.send(f"Δεν βρέθηκαν στίχοι για: `{label}`")
+
+        pages = paginate_lyrics(result["plainLyrics"])
+        track_name = result.get("trackName") or song
+        artist_name = result.get("artistName") or ""
+        # LRCLIB track names sometimes already include the artist ("Song - Artist")
+        title = track_name if artist_name.lower() in track_name.lower() else f"{track_name} - {artist_name}"
+        view = LyricsPaginator(pages, title, ctx.author)
+        if len(pages) == 1:
+            return await ctx.send(embed=view.make_embed())
+        view.message = await ctx.send(embed=view.make_embed(), view=view)
 
     @commands.command(name="loop", aliases=["l"])
     async def loop(self, ctx):

@@ -4,7 +4,7 @@ A Discord bot built with `discord.py`, featuring music playback, moderation, and
 
 ## Features
 
-- **Music** — YouTube playback with queue, shuffle, loop, skip, pause/resume
+- **Music** — YouTube playback with queue, shuffle, loop, skip, pause/resume, lyrics (via LRCLIB)
 - **Moderation** — kick, ban, unban, mute, unmute, purge
 - **General** — avatar, userinfo, help
 - **Fun** — random choice picker
